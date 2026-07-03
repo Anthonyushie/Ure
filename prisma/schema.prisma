@@ -1,0 +1,310 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum TradeStatus {
+  DRAFT
+  AWAITING_CRYPTO_LOCK
+  CRYPTO_LOCKED
+  AWAITING_BUYER
+  AWAITING_FIAT
+  FIAT_SECURED
+  RELEASING_CRYPTO
+  CRYPTO_RELEASED
+  PAYOUT_PENDING
+  COMPLETED
+  CANCELLED
+  REFUND_PENDING
+  FAILED_NEEDS_REVIEW
+}
+
+enum CryptoAsset {
+  STX
+}
+
+enum FiatCurrency {
+  NGN
+}
+
+enum EscrowStatus {
+  NOT_STARTED
+  LOCK_PENDING
+  LOCK_CONFIRMED
+  RELEASE_PENDING
+  RELEASE_CONFIRMED
+  REFUND_PENDING
+  REFUND_CONFIRMED
+  FAILED
+}
+
+enum FiatTransactionStatus {
+  RECEIVED
+  CONFIRMED
+  IGNORED
+  REVERSED
+  FAILED
+}
+
+enum PayoutStatus {
+  NOT_STARTED
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  REVERSED
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  IGNORED
+  FAILED
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+model User {
+  id            String        @id @default(uuid())
+  walletAddress String        @unique
+  role          UserRole      @default(USER)
+  displayName   String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  sellerTrades  Trade[]       @relation("SellerTrades")
+  buyerTrades   Trade[]       @relation("BuyerTrades")
+  bankAccounts  BankAccount[]
+  payouts       Payout[]
+}
+
+model BankAccount {
+  id                  String    @id @default(uuid())
+  userId              String
+  provider            String    @default("nomba")
+  bankCode            String
+  bankName            String?
+  accountNumberMasked String
+  accountName         String
+  recipientReference  String?
+  isPrimary           Boolean   @default(false)
+  verifiedAt          DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user                User      @relation(fields: [userId], references: [id])
+  payouts             Payout[]
+  sellerTrades        Trade[]   @relation("TradeSellerBankAccount")
+
+  @@index([userId])
+}
+
+model Trade {
+  id                  String       @id @default(uuid())
+  sellerId            String
+  buyerId             String?
+  sellerBankAccountId String?
+
+  cryptoAsset         CryptoAsset  @default(STX)
+  cryptoAmountMicro   BigInt
+  fiatCurrency        FiatCurrency @default(NGN)
+  fiatExpectedMinor   BigInt
+  fiatReceivedMinor   BigInt       @default(0)
+
+  status              TradeStatus  @default(DRAFT)
+  expiresAt           DateTime?
+  acceptedAt          DateTime?
+  completedAt         DateTime?
+  cancelledAt         DateTime?
+  failureReason       String?
+
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  seller              User         @relation("SellerTrades", fields: [sellerId], references: [id])
+  buyer               User?        @relation("BuyerTrades", fields: [buyerId], references: [id])
+  sellerBankAccount   BankAccount? @relation("TradeSellerBankAccount", fields: [sellerBankAccountId], references: [id])
+  virtualAccount      VirtualAccount?
+  escrowLock          EscrowLock?
+  fiatTransactions    FiatTransaction[]
+  payouts             Payout[]
+  auditLogs           AuditLog[]
+
+  @@index([sellerId])
+  @@index([buyerId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model VirtualAccount {
+  id                  String   @id @default(uuid())
+  tradeId             String   @unique
+  provider            String   @default("nomba")
+  providerAccountId   String?  @unique
+  accountReference    String   @unique
+  accountNumber       String
+  bankName            String
+  accountName         String?
+  expectedAmountMinor BigInt
+  currency            String   @default("NGN")
+  expiresAt           DateTime?
+  rawProviderPayload  Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  trade               Trade    @relation(fields: [tradeId], references: [id])
+
+  @@index([accountNumber])
+  @@index([accountReference])
+}
+
+model EscrowLock {
+  id                String       @id @default(uuid())
+  tradeId           String       @unique
+  chain             String       @default("stacks")
+  network           String       @default("testnet")
+  contractAddress   String
+  contractName      String
+  escrowIdOnChain   String?
+  lockTxId          String?      @unique
+  releaseTxId       String?      @unique
+  refundTxId        String?      @unique
+  sellerAddress     String
+  buyerAddress      String?
+  oracleAddress     String?
+  amountMicro       BigInt
+  status            EscrowStatus @default(NOT_STARTED)
+  confirmations     Int          @default(0)
+  rawLockPayload    Json?
+  rawReleasePayload Json?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  trade             Trade        @relation(fields: [tradeId], references: [id])
+}
+
+model FiatTransaction {
+  id                    String                @id @default(uuid())
+  tradeId               String
+  provider              String                @default("nomba")
+  providerTransactionId String?               @unique
+  sessionId             String?               @unique
+  accountReference      String?
+  amountMinor           BigInt
+  currency              String                @default("NGN")
+  status                FiatTransactionStatus @default(RECEIVED)
+  providerStatus        String?
+  payerName             String?
+  payerAccountMasked    String?
+  rawProviderPayload    Json?
+  receivedAt            DateTime?
+  confirmedAt           DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  trade                 Trade                 @relation(fields: [tradeId], references: [id])
+
+  @@index([tradeId])
+  @@index([accountReference])
+  @@index([createdAt])
+}
+
+model Payout {
+  id                 String       @id @default(uuid())
+  tradeId            String
+  sellerId           String
+  bankAccountId      String?
+  provider           String       @default("nomba")
+  providerTransferId String?      @unique
+  merchantTxRef      String       @unique
+  idempotencyKey     String       @unique
+  amountMinor        BigInt
+  currency           String       @default("NGN")
+  status             PayoutStatus @default(NOT_STARTED)
+  providerStatus     String?
+  failureReason      String?
+  rawProviderPayload Json?
+  initiatedAt        DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  trade              Trade        @relation(fields: [tradeId], references: [id])
+  seller             User         @relation(fields: [sellerId], references: [id])
+  bankAccount        BankAccount? @relation(fields: [bankAccountId], references: [id])
+
+  @@index([tradeId])
+  @@index([sellerId])
+  @@index([status])
+}
+
+model WebhookEvent {
+  id                    String        @id @default(uuid())
+  provider              String        @default("nomba")
+  eventType             String
+  requestId             String?       @unique
+  providerEventId       String?       @unique
+  providerTransactionId String?
+  sessionId             String?
+  signatureValid        Boolean       @default(false)
+  status                WebhookStatus @default(RECEIVED)
+  rawHeaders            Json?
+  rawPayload            Json
+  errorMessage          String?
+  processedAt           DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  @@index([eventType])
+  @@index([providerTransactionId])
+  @@index([sessionId])
+  @@index([createdAt])
+}
+
+model Job {
+  id           String    @id @default(uuid())
+  type         String
+  status       JobStatus @default(PENDING)
+  payload      Json
+  attempts     Int       @default(0)
+  maxAttempts  Int       @default(5)
+  runAfter     DateTime  @default(now())
+  lockedAt     DateTime?
+  lockedBy     String?
+  errorMessage String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([type, status, runAfter])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  tradeId   String?
+  actorType String
+  actorId   String?
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  trade     Trade?   @relation(fields: [tradeId], references: [id])
+
+  @@index([tradeId])
+  @@index([action])
+  @@index([createdAt])
+}

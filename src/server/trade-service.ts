@@ -1,0 +1,323 @@
+import type { Prisma, PrismaClient } from "@/generated/prisma/client";
+import type { TradeStatus } from "@/generated/prisma/enums";
+import { AppError, IntegrationNotConfiguredError, NotFoundError } from "@/lib/errors";
+import { getEnv } from "@/lib/env";
+import { getPrisma } from "@/lib/prisma";
+import { createAuditLog } from "@/lib/audit";
+import { assertPositiveBigIntString } from "@/lib/money";
+import { assertCanTransitionTrade } from "@/lib/state-machine";
+
+type TxClient = Prisma.TransactionClient | PrismaClient;
+
+export type CreateTradeInput = {
+  sellerWalletAddress: string;
+  cryptoAsset: "STX";
+  cryptoAmountMicro: string;
+  fiatExpectedMinor: string;
+  sellerBankAccountId?: string;
+};
+
+export type ListTradesInput = {
+  status?: TradeStatus;
+  sellerId?: string;
+  buyerId?: string;
+  cursor?: string;
+  limit: number;
+};
+
+export async function createTrade(input: CreateTradeInput) {
+  const prisma = getPrisma();
+  const cryptoAmountMicro = assertPositiveBigIntString(
+    input.cryptoAmountMicro,
+    "cryptoAmountMicro",
+  );
+  const fiatExpectedMinor = assertPositiveBigIntString(
+    input.fiatExpectedMinor,
+    "fiatExpectedMinor",
+  );
+  const sellerWalletAddress = input.sellerWalletAddress.trim();
+
+  return prisma.$transaction(async (tx) => {
+    const seller = await tx.user.upsert({
+      where: { walletAddress: sellerWalletAddress },
+      update: {},
+      create: { walletAddress: sellerWalletAddress },
+    });
+
+    if (input.sellerBankAccountId) {
+      const bankAccount = await tx.bankAccount.findFirst({
+        where: {
+          id: input.sellerBankAccountId,
+          userId: seller.id,
+        },
+      });
+
+      if (!bankAccount) {
+        throw new AppError(
+          "SELLER_BANK_ACCOUNT_NOT_FOUND",
+          "Seller bank account does not belong to this wallet.",
+          422,
+        );
+      }
+    }
+
+    const trade = await tx.trade.create({
+      data: {
+        sellerId: seller.id,
+        sellerBankAccountId: input.sellerBankAccountId,
+        cryptoAsset: input.cryptoAsset,
+        cryptoAmountMicro,
+        fiatExpectedMinor,
+      },
+      include: tradeDetailInclude,
+    });
+
+    await createAuditLog(tx, {
+      tradeId: trade.id,
+      actorType: "USER",
+      actorId: seller.id,
+      action: "TRADE_CREATED",
+      metadata: {
+        status: trade.status,
+        cryptoAmountMicro: trade.cryptoAmountMicro.toString(),
+        fiatExpectedMinor: trade.fiatExpectedMinor.toString(),
+      },
+    });
+
+    return trade;
+  });
+}
+
+export async function listTrades(input: ListTradesInput) {
+  const prisma = getPrisma();
+  const items = await prisma.trade.findMany({
+    where: {
+      status: input.status,
+      sellerId: input.sellerId,
+      buyerId: input.buyerId,
+    },
+    include: {
+      seller: true,
+      buyer: true,
+      escrowLock: true,
+      virtualAccount: true,
+    },
+    orderBy: { createdAt: "desc" },
+    take: input.limit + 1,
+    skip: input.cursor ? 1 : 0,
+    cursor: input.cursor ? { id: input.cursor } : undefined,
+  });
+
+  const hasMore = items.length > input.limit;
+  const visibleItems = hasMore ? items.slice(0, input.limit) : items;
+
+  return {
+    items: visibleItems,
+    nextCursor: hasMore ? visibleItems.at(-1)?.id ?? null : null,
+  };
+}
+
+export async function getTradeDetail(id: string) {
+  const prisma = getPrisma();
+  const trade = await prisma.trade.findUnique({
+    where: { id },
+    include: tradeDetailInclude,
+  });
+
+  if (!trade) {
+    throw new NotFoundError("Trade");
+  }
+
+  return trade;
+}
+
+export async function getTradeStatus(id: string) {
+  const prisma = getPrisma();
+  const trade = await prisma.trade.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      fiatReceivedMinor: true,
+      escrowLock: {
+        select: { status: true },
+      },
+      payouts: {
+        select: { status: true },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      },
+    },
+  });
+
+  if (!trade) {
+    throw new NotFoundError("Trade");
+  }
+
+  return {
+    tradeId: trade.id,
+    status: trade.status,
+    fiatReceivedMinor: trade.fiatReceivedMinor,
+    escrowStatus: trade.escrowLock?.status ?? "NOT_STARTED",
+    payoutStatus: trade.payouts[0]?.status ?? "NOT_STARTED",
+  };
+}
+
+export async function transitionTradeStatus(input: {
+  tradeId: string;
+  to: TradeStatus;
+  actorType: string;
+  actorId?: string;
+  metadata?: Prisma.InputJsonObject;
+}) {
+  const prisma = getPrisma();
+
+  return prisma.$transaction(async (tx) =>
+    transitionTradeStatusInTx(tx, {
+      tradeId: input.tradeId,
+      to: input.to,
+      actorType: input.actorType,
+      actorId: input.actorId,
+      metadata: input.metadata,
+    }),
+  );
+}
+
+export async function recordLockTransaction(input: {
+  tradeId: string;
+  sellerWalletAddress: string;
+  lockTxId: string;
+}) {
+  const prisma = getPrisma();
+  const env = getEnv();
+  const sellerWalletAddress = input.sellerWalletAddress.trim();
+
+  return prisma.$transaction(async (tx) => {
+    const trade = await tx.trade.findUnique({
+      where: { id: input.tradeId },
+      include: {
+        seller: true,
+        escrowLock: true,
+      },
+    });
+
+    if (!trade) {
+      throw new NotFoundError("Trade");
+    }
+
+    if (trade.seller.walletAddress !== sellerWalletAddress) {
+      throw new AppError(
+        "SELLER_WALLET_MISMATCH",
+        "Only the seller wallet can record the escrow lock transaction.",
+        403,
+      );
+    }
+
+    if (trade.escrowLock?.lockTxId === input.lockTxId) {
+      return getTradeDetail(input.tradeId);
+    }
+
+    if (trade.escrowLock) {
+      throw new AppError(
+        "ESCROW_LOCK_ALREADY_RECORDED",
+        "This trade already has an escrow lock transaction.",
+        409,
+      );
+    }
+
+    await transitionTradeStatusInTx(tx, {
+      tradeId: trade.id,
+      to: "AWAITING_CRYPTO_LOCK",
+      actorType: "USER",
+      actorId: trade.sellerId,
+      metadata: { lockTxId: input.lockTxId },
+    });
+
+    await tx.escrowLock.create({
+      data: {
+        tradeId: trade.id,
+        contractAddress: env.ESCROW_CONTRACT_ADDRESS || "pending-contract-address",
+        contractName: env.ESCROW_CONTRACT_NAME,
+        lockTxId: input.lockTxId,
+        sellerAddress: sellerWalletAddress,
+        amountMicro: trade.cryptoAmountMicro,
+        status: "LOCK_PENDING",
+        rawLockPayload: {
+          integration: "stacks",
+          phase: "deferred",
+        },
+      },
+    });
+
+    return tx.trade.findUniqueOrThrow({
+      where: { id: trade.id },
+      include: tradeDetailInclude,
+    });
+  });
+}
+
+export async function acceptTrade() {
+  throw new IntegrationNotConfiguredError("Nomba virtual account");
+}
+
+async function transitionTradeStatusInTx(
+  tx: TxClient,
+  input: {
+    tradeId: string;
+    to: TradeStatus;
+    actorType: string;
+    actorId?: string;
+    metadata?: Prisma.InputJsonObject;
+  },
+) {
+  const trade = await tx.trade.findUnique({
+    where: { id: input.tradeId },
+    select: { id: true, status: true },
+  });
+
+  if (!trade) {
+    throw new NotFoundError("Trade");
+  }
+
+  assertCanTransitionTrade(trade.status, input.to);
+
+  const updated = await tx.trade.update({
+    where: { id: trade.id },
+    data: {
+      status: input.to,
+      completedAt: input.to === "COMPLETED" ? new Date() : undefined,
+      cancelledAt: input.to === "CANCELLED" ? new Date() : undefined,
+    },
+  });
+
+  await createAuditLog(tx, {
+    tradeId: trade.id,
+    actorType: input.actorType,
+    actorId: input.actorId,
+    action: "TRADE_STATUS_CHANGED",
+    metadata: {
+      from: trade.status,
+      to: input.to,
+      ...(input.metadata ?? {}),
+    },
+  });
+
+  return updated;
+}
+
+const tradeDetailInclude = {
+  seller: true,
+  buyer: true,
+  sellerBankAccount: true,
+  virtualAccount: true,
+  escrowLock: true,
+  fiatTransactions: {
+    orderBy: { createdAt: "desc" },
+  },
+  payouts: {
+    orderBy: { createdAt: "desc" },
+  },
+  auditLogs: {
+    orderBy: { createdAt: "desc" },
+  },
+} satisfies Prisma.TradeInclude;

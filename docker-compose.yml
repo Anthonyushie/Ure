@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: ure-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ure
+      POSTGRES_PASSWORD: ure_password
+      POSTGRES_DB: ure
+    ports:
+      - "5432:5432"
+    volumes:
+      - ure-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ure -d ure"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  ure-postgres-data:
