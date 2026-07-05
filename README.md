@@ -322,15 +322,4 @@ No license file is present in the repository yet. Until one is added, treat this
 
 ---
 
-## Verify
 
-Items below I could not fully confirm from the repository and either took from the brief or inferred — please double-check:
-
-- **Wallet options (Leather / Xverse).** The `@stacks/connect` dependency and recent commits reference Xverse/Leather, but I did not open the client connect component to confirm both are wired. Grounded in dependencies + commit history, not the UI code.
-- **Exact behavior of `/api/users`, `/api/auth/nonce`, `/api/trades/[id]`, and `/api/admin/trades/[id]`.** Purposes are inferred from file paths and sibling handlers; I read the trades-list, accept, lock, session, bank-accounts, banks, webhook, payment, and jobs/tick handlers directly but not those four.
-- **Live URL `ure-ten.vercel.app`.** Taken from the brief; not derivable from the repo.
-- **Hackathon link.** Taken from the brief.
-- **"Phase D" naming.** Comes from TODO comments in [`escrow-service.ts`](src/server/escrow-service.ts) / [`stacks.ts`](src/lib/stacks.ts); there is no phase document in the repo.
-- **Cron cadence.** [`vercel.json`](vercel.json) schedules `7 3 * * *` (once daily at 03:07 UTC), consistent with the Vercel Hobby-plan limit noted in recent commits — described here as "daily."
-- **License.** No `LICENSE` file found; the "all rights reserved" line is a safe default, not a stated choice — replace it with the intended license.
-- **Node 20+ / Postgres 14+ minimums.** Inferred from `@types/node@20` and general Prisma 7 requirements; not pinned by an `engines` field.
