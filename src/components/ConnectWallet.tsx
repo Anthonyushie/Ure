@@ -47,13 +47,20 @@ export function ConnectWallet({
       // bundle (keeps SSR/prerender clean).
       const { connect, request } = await import("@stacks/connect");
 
-      // 1. Ask the wallet (Leather/Xverse) for the STX account.
+      // 1. Ask the wallet for accounts. Wallets return several chains (BTC,
+      //    Stacks, etc.) and don't agree on the `symbol` field, so pick the
+      //    Stacks account by its address format (SP/ST/SM/SN…), not by symbol
+      //    or array position.
       const { addresses } = await connect();
+      const looksLikeStacks = (a?: string) =>
+        /^S[TPMN][0-9A-HJKMNP-Z]{37,40}$/i.test(a ?? "");
       const stx =
-        addresses.find((entry) => entry.symbol === "STX") ?? addresses[0];
+        addresses.find(
+          (entry) => entry.symbol === "STX" && looksLikeStacks(entry.address),
+        ) ?? addresses.find((entry) => looksLikeStacks(entry.address));
 
       if (!stx?.address || !stx.publicKey) {
-        throw new Error("Wallet did not return a Stacks address.");
+        throw new Error("No Stacks account returned by the wallet.");
       }
 
       // 2. Get a server-issued single-use challenge for that address.
