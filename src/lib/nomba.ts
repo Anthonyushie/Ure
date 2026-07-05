@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { BANKS } from "@/lib/banks";
 import { getEnv } from "@/lib/env";
 import { formatKoboAsNgn, koboToNairaNumber, nairaToKobo } from "@/lib/money";
 
@@ -95,6 +96,8 @@ export type BankAccountLookupResult = {
   raw: unknown;
 };
 
+export type NombaBank = { name: string; code: string };
+
 export type VerifyWebhookInput = {
   /** Exact request bytes as received. */
   rawBody: string;
@@ -116,6 +119,7 @@ export interface NombaClient {
   fetchTransactionByReference(
     accountReference: string,
   ): Promise<NombaTransaction | null>;
+  listBanks(): Promise<NombaBank[]>;
   lookupBankAccount(input: {
     accountNumber: string;
     bankCode: string;
@@ -257,6 +261,10 @@ class MockNombaClient implements NombaClient {
     };
   }
 
+  async listBanks(): Promise<NombaBank[]> {
+    return BANKS;
+  }
+
   async lookupBankAccount(input: {
     accountNumber: string;
     bankCode: string;
@@ -372,27 +380,62 @@ class HttpNombaClient implements NombaClient {
     });
 
     if (!res.ok) {
-      throw new Error(`Nomba createVirtualAccount failed: ${res.status}`);
+      const body = await res.text();
+      // Idempotency: if the account for this ref already exists (e.g. a prior
+      // accept created it on Nomba but failed to persist locally), fetch and
+      // return the existing one instead of throwing — otherwise the trade is
+      // permanently stuck (accept keeps 400ing on the duplicate accountRef).
+      if (res.status === 400 && /already exists/i.test(body)) {
+        const existing = await this.getVirtualAccountByRef(input.accountReference);
+        if (existing) {
+          return existing;
+        }
+      }
+      throw new Error(
+        `Nomba createVirtualAccount failed: ${res.status} ${body.slice(0, 300)}`,
+      );
     }
 
-    const json = (await res.json()) as {
-      data?: {
+    return this.mapVirtualAccountResponse(await res.json(), input.accountReference);
+  }
+
+  /** GET an existing virtual account by its accountRef. */
+  private async getVirtualAccountByRef(
+    accountRef: string,
+  ): Promise<CreateVirtualAccountResult | null> {
+    const res = await fetch(
+      `${this.config.baseUrl}/v1/accounts/virtual/${encodeURIComponent(accountRef)}`,
+      { headers: await this.authedHeaders() },
+    );
+    if (!res.ok) {
+      return null;
+    }
+    return this.mapVirtualAccountResponse(await res.json(), accountRef);
+  }
+
+  private mapVirtualAccountResponse(
+    json: unknown,
+    accountReference: string,
+  ): CreateVirtualAccountResult {
+    const data =
+      ((json as { data?: Record<string, unknown> })?.data ?? {}) as {
         accountHolderId?: string;
         bankAccountNumber?: string;
         bankName?: string;
+        bankAccountName?: string;
         accountName?: string;
         accountRef?: string;
         expiryDate?: string;
       };
-    };
-    const data = json.data ?? {};
 
     return {
-      providerAccountId: data.accountHolderId ?? input.accountReference,
+      providerAccountId: data.accountHolderId ?? accountReference,
       accountNumber: data.bankAccountNumber ?? "",
       bankName: data.bankName ?? "Nomba",
-      accountName: data.accountName ?? "Ure Trade",
-      accountReference: data.accountRef ?? input.accountReference,
+      // The per-account name (bankAccountName) is what the buyer transfers to;
+      // accountName on a GET is the parent account, so prefer bankAccountName.
+      accountName: data.bankAccountName ?? data.accountName ?? "Ure Trade",
+      accountReference: data.accountRef ?? accountReference,
       expiresAt: data.expiryDate ? new Date(data.expiryDate) : null,
       raw: json,
     };
@@ -451,6 +494,24 @@ class HttpNombaClient implements NombaClient {
       payerName: txn.payerName ?? null,
       raw: json,
     };
+  }
+
+  async listBanks(): Promise<NombaBank[]> {
+    // GET /v1/transfers/banks → [{ name, code, nipCode, ... }]. Uses Nomba's
+    // own bank codes (NOT NIP codes) — required for lookup/transfer to match.
+    const res = await fetch(`${this.config.baseUrl}/v1/transfers/banks`, {
+      headers: await this.authedHeaders(),
+    });
+    if (!res.ok) {
+      return [];
+    }
+    const json = (await res.json()) as
+      | { data?: Array<{ name?: string; code?: string }> }
+      | Array<{ name?: string; code?: string }>;
+    const arr = Array.isArray(json) ? json : (json.data ?? []);
+    return arr
+      .filter((b) => b.name && b.code)
+      .map((b) => ({ name: b.name!.trim(), code: b.code! }));
   }
 
   async lookupBankAccount(input: {

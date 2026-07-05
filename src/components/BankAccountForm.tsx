@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Landmark, Plus } from "lucide-react";
-import { BANKS } from "@/lib/banks";
+import { BANKS, type Bank } from "@/lib/banks";
 
 type BankAccount = {
   id: string;
@@ -21,13 +21,34 @@ export function BankAccountForm({
 }) {
   const router = useRouter();
   const [accounts, setAccounts] = useState<BankAccount[]>(initialAccounts);
-  const [bankCode, setBankCode] = useState(BANKS[0].code);
+  const [banks, setBanks] = useState<Bank[]>(BANKS);
+  const [bankCode, setBankCode] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Load Nomba's real bank list (their codes, not NIP codes).
+  useEffect(() => {
+    let active = true;
+    fetch("/api/banks")
+      .then((r) => r.json())
+      .then((j) => {
+        if (active && j?.data?.banks?.length) {
+          setBanks(j.data.banks as Bank[]);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
   async function addAccount() {
     setError(null);
+    if (!bankCode) {
+      setError("Select a bank.");
+      return;
+    }
     if (!/^\d{10}$/.test(accountNumber)) {
       setError("Account number must be 10 digits.");
       return;
@@ -106,8 +127,9 @@ export function BankAccountForm({
           value={bankCode}
           onChange={(e) => setBankCode(e.target.value)}
         >
-          {BANKS.map((b) => (
-            <option key={b.code} value={b.code}>
+          <option value="">Select bank…</option>
+          {banks.map((b) => (
+            <option key={`${b.code}-${b.name}`} value={b.code}>
               {b.name}
             </option>
           ))}
