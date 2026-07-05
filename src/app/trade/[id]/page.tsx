@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AcceptTradeButton } from "@/components/AcceptTradeButton";
 import { AmountDisplay } from "@/components/AmountDisplay";
+import { LockEscrowButton } from "@/components/LockEscrowButton";
 import { PaymentInstructionCard } from "@/components/PaymentInstructionCard";
 import { TradeLiveStatus } from "@/components/TradeLiveStatus";
 import { TradeStatusTimeline } from "@/components/TradeStatusTimeline";
@@ -45,6 +46,8 @@ export default async function TradePage({
     ACCEPTABLE.has(trade.status) &&
     (!trade.buyerId || isBuyer);
 
+  const canLock = isSeller && trade.status === "DRAFT";
+
   return (
     <div className="mx-auto grid w-full max-w-6xl gap-8 px-5 py-10 lg:grid-cols-[1fr_24rem]">
       <section className="rounded-lg border border-white/10 bg-white/[0.04] p-6">
@@ -73,6 +76,38 @@ export default async function TradePage({
             </p>
           </div>
         </div>
+
+        {canLock ? (
+          <div className="mt-6">
+            <LockEscrowButton
+              tradeId={trade.id}
+              sellerWalletAddress={trade.seller.walletAddress}
+            />
+          </div>
+        ) : null}
+
+        {isSeller ? (
+          <div className="mt-6 rounded-md border border-white/10 bg-black/20 p-4 text-sm">
+            <p className="text-zinc-400">Payout bank account</p>
+            {trade.sellerBankAccount ? (
+              <p className="mt-1 text-zinc-100">
+                {trade.sellerBankAccount.bankName ?? "Bank"} ·{" "}
+                <span className="font-mono">
+                  {trade.sellerBankAccount.accountNumberMasked}
+                </span>{" "}
+                · {trade.sellerBankAccount.accountName}
+              </p>
+            ) : (
+              <p className="mt-1 text-amber-200">
+                No payout account attached — add one on your{" "}
+                <Link href="/dashboard" className="underline">
+                  dashboard
+                </Link>{" "}
+                so your NGN payout has a real destination.
+              </p>
+            )}
+          </div>
+        ) : null}
 
         {canAccept ? (
           <div className="mt-6">

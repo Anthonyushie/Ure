@@ -1,7 +1,9 @@
+import { BankAccountForm } from "@/components/BankAccountForm";
 import { CreateTradeForm } from "@/components/CreateTradeForm";
 import { TradeCard } from "@/components/TradeCard";
 import { ConnectWallet } from "@/components/ConnectWallet";
 import { getCurrentSession } from "@/lib/auth";
+import { listBankAccounts } from "@/server/bank-account-service";
 import { getTradesForWallet } from "@/server/trade-service";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +13,9 @@ export default async function DashboardPage() {
   const { selling, buying } = session
     ? await getTradesForWallet(session.walletAddress)
     : { selling: [], buying: [] };
+  const bankAccounts = session
+    ? await listBankAccounts(session.walletAddress)
+    : [];
 
   return (
     <div className="mx-auto grid w-full max-w-7xl gap-8 px-5 py-10 lg:grid-cols-[24rem_1fr]">
@@ -25,7 +30,10 @@ export default async function DashboardPage() {
           </div>
         </section>
         {session ? (
-          <CreateTradeForm walletAddress={session.walletAddress} />
+          <>
+            <CreateTradeForm walletAddress={session.walletAddress} />
+            <BankAccountForm initialAccounts={bankAccounts} />
+          </>
         ) : (
           <p className="rounded-lg border border-white/10 bg-white/[0.02] p-5 text-sm text-zinc-400">
             Connect your Stacks wallet to create a trade.

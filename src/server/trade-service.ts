@@ -56,10 +56,12 @@ export async function createTrade(input: CreateTradeInput) {
       create: { walletAddress: sellerWalletAddress },
     });
 
-    if (input.sellerBankAccountId) {
+    let sellerBankAccountId = input.sellerBankAccountId;
+
+    if (sellerBankAccountId) {
       const bankAccount = await tx.bankAccount.findFirst({
         where: {
-          id: input.sellerBankAccountId,
+          id: sellerBankAccountId,
           userId: seller.id,
         },
       });
@@ -71,12 +73,21 @@ export async function createTrade(input: CreateTradeInput) {
           422,
         );
       }
+    } else {
+      // Default to the seller's primary (or most recent) payout account so the
+      // eventual payout has a real destination.
+      const primary = await tx.bankAccount.findFirst({
+        where: { userId: seller.id },
+        orderBy: [{ isPrimary: "desc" }, { createdAt: "desc" }],
+        select: { id: true },
+      });
+      sellerBankAccountId = primary?.id;
     }
 
     const trade = await tx.trade.create({
       data: {
         sellerId: seller.id,
-        sellerBankAccountId: input.sellerBankAccountId,
+        sellerBankAccountId,
         cryptoAsset: input.cryptoAsset,
         cryptoAmountMicro,
         fiatExpectedMinor,

@@ -90,6 +90,11 @@ export type NombaTransfer = {
   raw: unknown;
 };
 
+export type BankAccountLookupResult = {
+  accountName: string;
+  raw: unknown;
+};
+
 export type VerifyWebhookInput = {
   /** Exact request bytes as received. */
   rawBody: string;
@@ -111,6 +116,10 @@ export interface NombaClient {
   fetchTransactionByReference(
     accountReference: string,
   ): Promise<NombaTransaction | null>;
+  lookupBankAccount(input: {
+    accountNumber: string;
+    bankCode: string;
+  }): Promise<BankAccountLookupResult | null>;
   initiateTransfer(
     input: InitiateTransferInput,
   ): Promise<InitiateTransferResult>;
@@ -156,6 +165,10 @@ export function buildNombaSignatureMessage(
   payload: unknown,
   timestamp: string,
 ): string {
+  // Per Nomba docs, responseCode collapses to "" when the value is the literal
+  // string "null" (not just a JSON null / missing key, which pick already maps
+  // to ""). Missing this makes the signature mismatch and the webhook 401s.
+  const responseCode = pick(payload, ["data", "transaction", "responseCode"]);
   const fields = [
     pick(payload, ["event_type"]),
     pick(payload, ["requestId"]),
@@ -164,7 +177,7 @@ export function buildNombaSignatureMessage(
     pick(payload, ["data", "transaction", "transactionId"]),
     pick(payload, ["data", "transaction", "type"]),
     pick(payload, ["data", "transaction", "time"]),
-    pick(payload, ["data", "transaction", "responseCode"]),
+    responseCode === "null" ? "" : responseCode,
   ];
   return `${fields.join(":")}:${timestamp}`;
 }
@@ -241,6 +254,16 @@ class MockNombaClient implements NombaClient {
       accountReference,
       payerName: "MOCK PAYER",
       raw: { mock: true, accountReference },
+    };
+  }
+
+  async lookupBankAccount(input: {
+    accountNumber: string;
+    bankCode: string;
+  }): Promise<BankAccountLookupResult | null> {
+    return {
+      accountName: "URE VERIFIED ACCOUNT",
+      raw: { mock: true, ...input },
     };
   }
 
@@ -428,6 +451,32 @@ class HttpNombaClient implements NombaClient {
       payerName: txn.payerName ?? null,
       raw: json,
     };
+  }
+
+  async lookupBankAccount(input: {
+    accountNumber: string;
+    bankCode: string;
+  }): Promise<BankAccountLookupResult | null> {
+    // POST /v1/transfers/bank/lookup → data.accountName (confirmed via docs).
+    const res = await fetch(`${this.config.baseUrl}/v1/transfers/bank/lookup`, {
+      method: "POST",
+      headers: await this.authedHeaders(),
+      body: JSON.stringify({
+        accountNumber: input.accountNumber,
+        bankCode: input.bankCode,
+      }),
+    });
+    if (!res.ok) {
+      return null;
+    }
+    const json = (await res.json()) as {
+      data?: { accountName?: string };
+    };
+    const accountName = json.data?.accountName;
+    if (!accountName) {
+      return null;
+    }
+    return { accountName, raw: json };
   }
 
   async initiateTransfer(

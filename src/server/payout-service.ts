@@ -39,7 +39,7 @@ async function resolvePayoutDestination(
       return {
         bankAccountId: bank.id,
         bankCode: bank.bankCode,
-        accountNumber: bank.accountNumberMasked,
+        accountNumber: bank.accountNumber,
         accountName: bank.accountName,
       };
     }

@@ -9,6 +9,12 @@ export const createUserSchema = z.object({
   displayName: z.string().trim().min(1).max(80).optional(),
 });
 
+export const createBankAccountSchema = z.object({
+  bankCode: z.string().trim().min(3).max(10),
+  accountNumber: z.string().trim().regex(/^\d{10}$/, "Account number must be 10 digits."),
+  makePrimary: z.boolean().optional(),
+});
+
 export const authNonceSchema = z.object({
   walletAddress: walletAddressSchema,
 });

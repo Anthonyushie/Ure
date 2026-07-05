@@ -99,6 +99,7 @@ model BankAccount {
   provider            String    @default("nomba")
   bankCode            String
   bankName            String?
+  accountNumber       String
   accountNumberMasked String
   accountName         String
   recipientReference  String?
