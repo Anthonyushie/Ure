@@ -1,7 +1,7 @@
 import { normalizeWalletAddress } from "@/lib/auth-core";
 import { bankNameForCode } from "@/lib/banks";
 import { AppError } from "@/lib/errors";
-import { getNombaClient } from "@/lib/nomba";
+import { getNombaLookupClient } from "@/lib/nomba";
 import { getPrisma } from "@/lib/prisma";
 
 export function maskAccountNumber(accountNumber: string): string {
@@ -49,8 +49,9 @@ export async function createBankAccount(input: {
     create: { walletAddress },
   });
 
-  // Verify the account with the provider (mock returns a placeholder name).
-  const lookup = await getNombaClient().lookupBankAccount({
+  // Verify the account via name enquiry (uses the LIVE lookup client when
+  // configured, so real account names resolve; no money moves).
+  const lookup = await getNombaLookupClient().lookupBankAccount({
     accountNumber: input.accountNumber,
     bankCode: input.bankCode,
   });

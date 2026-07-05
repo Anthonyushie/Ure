@@ -13,6 +13,12 @@ const serverEnvSchema = z.object({
   NOMBA_ACCOUNT_ID: z.string().optional(),
   NOMBA_SUBACCOUNT_ID: z.string().optional(),
   NOMBA_WEBHOOK_SECRET: z.string().optional(),
+  // Optional dedicated (LIVE) client used ONLY for read-only bank-name lookup,
+  // so real account names can be resolved while money stays on sandbox.
+  NOMBA_LOOKUP_BASE_URL: z.url().optional(),
+  NOMBA_LOOKUP_CLIENT_ID: z.string().optional(),
+  NOMBA_LOOKUP_CLIENT_SECRET: z.string().optional(),
+  NOMBA_LOOKUP_ACCOUNT_ID: z.string().optional(),
   STACKS_NETWORK: z.enum(["testnet", "mainnet", "devnet"]).default("testnet"),
   STACKS_API_URL: z.url().optional(),
   ESCROW_CONTRACT_ADDRESS: z.string().optional(),

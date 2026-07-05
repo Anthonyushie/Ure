@@ -590,7 +590,42 @@ export function getNombaClient(): NombaClient {
   return cachedClient;
 }
 
+let cachedLookupClient: NombaClient | null = null;
+
+/**
+ * Client used for the read-only bank-name lookup. If dedicated LIVE lookup
+ * credentials are configured, a separate live client resolves REAL account
+ * names (name enquiry moves no money) while the main client (sandbox) still
+ * handles virtual accounts and payouts. Falls back to the main client.
+ */
+export function getNombaLookupClient(): NombaClient {
+  const env = getEnv();
+  const hasLookupCreds = Boolean(
+    env.NOMBA_LOOKUP_BASE_URL &&
+      env.NOMBA_LOOKUP_CLIENT_ID &&
+      env.NOMBA_LOOKUP_CLIENT_SECRET &&
+      env.NOMBA_LOOKUP_ACCOUNT_ID,
+  );
+
+  if (!hasLookupCreds) {
+    return getNombaClient();
+  }
+
+  if (!cachedLookupClient) {
+    cachedLookupClient = new HttpNombaClient({
+      baseUrl: env.NOMBA_LOOKUP_BASE_URL!,
+      clientId: env.NOMBA_LOOKUP_CLIENT_ID!,
+      clientSecret: env.NOMBA_LOOKUP_CLIENT_SECRET!,
+      accountId: env.NOMBA_LOOKUP_ACCOUNT_ID!,
+      subAccountId: "",
+      webhookSecret: "",
+    });
+  }
+  return cachedLookupClient;
+}
+
 /** Test/reset seam. */
 export function resetNombaClient(): void {
   cachedClient = null;
+  cachedLookupClient = null;
 }
