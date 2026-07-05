@@ -14,10 +14,10 @@ type TradeCardProps = {
 
 export function TradeCard(props: TradeCardProps) {
   return (
-    <article className="rounded-lg border border-white/10 bg-white/[0.04] p-5 shadow-2xl shadow-black/20">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="font-mono text-xs text-zinc-500">{props.id}</p>
+    <article className="rounded-lg border border-white/10 bg-white/[0.04] p-5 shadow-2xl shadow-black/20 transition hover:border-white/20 hover:bg-white/8">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-mono text-xs text-zinc-500">{props.id}</p>
           <h3 className="mt-2 text-lg font-semibold text-white">
             <AmountDisplay kind="crypto" amount={props.cryptoAmountMicro} />
           </h3>
@@ -28,7 +28,7 @@ export function TradeCard(props: TradeCardProps) {
         <StatusBadge status={props.status} />
       </div>
       <div className="mt-5 flex items-center justify-between gap-4 border-t border-white/10 pt-4">
-        <p className="truncate font-mono text-xs text-zinc-500">
+        <p className="min-w-0 truncate font-mono text-xs text-zinc-500">
           {props.sellerWalletAddress}
         </p>
         <Link

@@ -49,8 +49,8 @@ export default async function TradePage({
   const canLock = isSeller && trade.status === "DRAFT";
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-8 px-5 py-10 lg:grid-cols-[1fr_24rem]">
-      <section className="rounded-lg border border-white/10 bg-white/[0.04] p-6">
+    <div className="mx-auto grid w-full max-w-6xl items-start gap-6 px-4 py-8 sm:px-5 sm:py-10 lg:grid-cols-[1fr_22rem] lg:gap-8">
+      <section className="rounded-lg border border-white/10 bg-white/[0.04] p-5 sm:p-6">
         <div className="flex flex-col gap-4 border-b border-white/10 pb-6 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="font-mono text-xs text-zinc-500">{trade.id}</p>
@@ -135,7 +135,7 @@ export default async function TradePage({
         ) : null}
       </section>
 
-      <aside className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
+      <aside className="rounded-lg border border-white/10 bg-white/[0.04] p-5 lg:sticky lg:top-6">
         <h2 className="mb-4 text-base font-semibold text-white">Status timeline</h2>
         <TradeStatusTimeline status={trade.status} />
       </aside>

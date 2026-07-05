@@ -156,7 +156,9 @@ model VirtualAccount {
   id                  String   @id @default(uuid())
   tradeId             String   @unique
   provider            String   @default("nomba")
-  providerAccountId   String?  @unique
+  // NOT unique: Nomba returns the parent accountHolderId here, which is shared
+  // across every virtual account. Uniqueness is enforced by tradeId/accountReference.
+  providerAccountId   String?
   accountReference    String   @unique
   accountNumber       String
   bankName            String

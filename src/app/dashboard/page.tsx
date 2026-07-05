@@ -18,8 +18,8 @@ export default async function DashboardPage() {
     : [];
 
   return (
-    <div className="mx-auto grid w-full max-w-7xl gap-8 px-5 py-10 lg:grid-cols-[24rem_1fr]">
-      <aside className="grid content-start gap-5">
+    <div className="mx-auto grid w-full max-w-7xl items-start gap-6 px-4 py-8 sm:px-5 sm:py-10 lg:grid-cols-[22rem_1fr] lg:gap-8">
+      <aside className="grid content-start gap-5 lg:sticky lg:top-6">
         <section className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
           <p className="text-sm text-zinc-400">Wallet</p>
           <div className="mt-4">

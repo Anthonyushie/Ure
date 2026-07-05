@@ -16,6 +16,10 @@ export function PaymentInstructionCard(props: PaymentInstructionCardProps) {
         <Landmark className="size-5 text-amber-200" aria-hidden="true" />
         <h2 className="text-base font-semibold text-white">Payment rail</h2>
       </div>
+      <p className="mb-4 text-sm text-amber-100/90">
+        Transfer the <span className="font-semibold">exact</span> amount to this
+        account. Underpayment or overpayment will not release the trade.
+      </p>
       <dl className="grid gap-3 text-sm">
         <div className="flex items-center justify-between gap-6">
           <dt className="text-zinc-400">Bank</dt>
@@ -23,7 +27,9 @@ export function PaymentInstructionCard(props: PaymentInstructionCardProps) {
         </div>
         <div className="flex items-center justify-between gap-6">
           <dt className="text-zinc-400">Account number</dt>
-          <dd className="font-mono text-zinc-100">{props.accountNumber}</dd>
+          <dd className="font-mono text-lg font-semibold tracking-wide text-white">
+            {props.accountNumber}
+          </dd>
         </div>
         <div className="flex items-center justify-between gap-6">
           <dt className="text-zinc-400">Account name</dt>

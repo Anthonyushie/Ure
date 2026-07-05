@@ -21,7 +21,7 @@ export function StatusBadge({ status }: { status: TradeStatus }) {
   return (
     <span
       className={clsx(
-        "inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-medium",
+        "inline-flex shrink-0 items-center whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-medium",
         statusStyles[status],
       )}
     >
