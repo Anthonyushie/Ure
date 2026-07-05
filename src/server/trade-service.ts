@@ -1,11 +1,23 @@
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { TradeStatus } from "@/generated/prisma/enums";
-import { AppError, IntegrationNotConfiguredError, NotFoundError } from "@/lib/errors";
+import { AppError, NotFoundError } from "@/lib/errors";
 import { getEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
 import { assertPositiveBigIntString } from "@/lib/money";
+import { getNombaClient } from "@/lib/nomba";
+import { isStacksConfigured } from "@/lib/stacks";
 import { assertCanTransitionTrade } from "@/lib/state-machine";
+
+/** Stable virtual-account reference for a trade (also the payment key). */
+export function tradeAccountReference(tradeId: string): string {
+  return `ure-trade-${tradeId}`;
+}
+
+const ACCEPTABLE_TRADE_STATUSES: TradeStatus[] = [
+  "CRYPTO_LOCKED",
+  "AWAITING_BUYER",
+];
 
 type TxClient = Prisma.TransactionClient | PrismaClient;
 
@@ -115,6 +127,36 @@ export async function listTrades(input: ListTradesInput) {
     items: visibleItems,
     nextCursor: hasMore ? visibleItems.at(-1)?.id ?? null : null,
   };
+}
+
+/** Trades where the wallet is the seller and where it is the buyer. */
+export async function getTradesForWallet(walletAddress: string) {
+  const prisma = getPrisma();
+  const user = await prisma.user.findUnique({
+    where: { walletAddress: walletAddress.trim() },
+    select: { id: true },
+  });
+
+  if (!user) {
+    return { selling: [], buying: [] };
+  }
+
+  const [selling, buying] = await Promise.all([
+    prisma.trade.findMany({
+      where: { sellerId: user.id },
+      include: { seller: true, buyer: true, escrowLock: true, virtualAccount: true },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    }),
+    prisma.trade.findMany({
+      where: { buyerId: user.id },
+      include: { seller: true, buyer: true, escrowLock: true, virtualAccount: true },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    }),
+  ]);
+
+  return { selling, buying };
 }
 
 export async function getTradeDetail(id: string) {
@@ -233,6 +275,8 @@ export async function recordLockTransaction(input: {
       metadata: { lockTxId: input.lockTxId },
     });
 
+    const stacksLive = isStacksConfigured();
+
     await tx.escrowLock.create({
       data: {
         tradeId: trade.id,
@@ -241,13 +285,27 @@ export async function recordLockTransaction(input: {
         lockTxId: input.lockTxId,
         sellerAddress: sellerWalletAddress,
         amountMicro: trade.cryptoAmountMicro,
-        status: "LOCK_PENDING",
+        // Mock mode confirms the lock immediately; live mode waits for a chain
+        // watcher (Phase D) before confirming.
+        status: stacksLive ? "LOCK_PENDING" : "LOCK_CONFIRMED",
+        confirmations: stacksLive ? 0 : 1,
         rawLockPayload: {
           integration: "stacks",
-          phase: "deferred",
+          phase: stacksLive ? "live" : "mock",
         },
       },
     });
+
+    // In mock mode, advance straight to CRYPTO_LOCKED so the trade is
+    // immediately acceptable by a buyer.
+    if (!stacksLive) {
+      await transitionTradeStatusInTx(tx, {
+        tradeId: trade.id,
+        to: "CRYPTO_LOCKED",
+        actorType: "SYSTEM",
+        metadata: { mockLockConfirmed: true, lockTxId: input.lockTxId },
+      });
+    }
 
     return tx.trade.findUniqueOrThrow({
       where: { id: trade.id },
@@ -256,11 +314,138 @@ export async function recordLockTransaction(input: {
   });
 }
 
-export async function acceptTrade() {
-  throw new IntegrationNotConfiguredError("Nomba virtual account");
+export type AcceptTradeInput = {
+  tradeId: string;
+  buyerWalletAddress: string;
+};
+
+/**
+ * Buyer accepts a locked trade: claim the buyer slot, create a single-use
+ * Nomba virtual account for the exact fiat amount, and move the trade to
+ * AWAITING_FIAT.
+ *
+ * Idempotency: the buyer slot is claimed with a conditional updateMany, and the
+ * VirtualAccount row is unique per trade — so a duplicate accept returns the
+ * existing account instead of creating a second one.
+ */
+export async function acceptTrade(input: AcceptTradeInput) {
+  const prisma = getPrisma();
+  const buyerWalletAddress = input.buyerWalletAddress.trim();
+
+  const buyer = await prisma.user.upsert({
+    where: { walletAddress: buyerWalletAddress },
+    update: {},
+    create: { walletAddress: buyerWalletAddress },
+  });
+
+  const trade = await prisma.trade.findUnique({
+    where: { id: input.tradeId },
+    include: { seller: true, virtualAccount: true },
+  });
+
+  if (!trade) {
+    throw new NotFoundError("Trade");
+  }
+
+  // Already fully accepted by this buyer → return existing (idempotent).
+  if (trade.buyerId === buyer.id && trade.virtualAccount) {
+    return getTradeDetail(trade.id);
+  }
+
+  if (trade.seller.walletAddress === buyerWalletAddress) {
+    throw new AppError(
+      "SELLER_CANNOT_ACCEPT_OWN_TRADE",
+      "A seller cannot accept their own trade.",
+      422,
+    );
+  }
+
+  if (trade.buyerId && trade.buyerId !== buyer.id) {
+    throw new AppError(
+      "TRADE_ALREADY_ACCEPTED",
+      "This trade has already been accepted by another buyer.",
+      409,
+    );
+  }
+
+  if (!ACCEPTABLE_TRADE_STATUSES.includes(trade.status)) {
+    throw new AppError(
+      "TRADE_NOT_ACCEPTABLE",
+      `Trade cannot be accepted while in status ${trade.status}.`,
+      409,
+    );
+  }
+
+  // Atomically claim the buyer slot if it is still open.
+  if (!trade.buyerId) {
+    const claimed = await prisma.trade.updateMany({
+      where: { id: trade.id, buyerId: null },
+      data: { buyerId: buyer.id, acceptedAt: new Date() },
+    });
+    if (claimed.count !== 1) {
+      throw new AppError(
+        "TRADE_ALREADY_ACCEPTED",
+        "This trade has already been accepted by another buyer.",
+        409,
+      );
+    }
+  }
+
+  // Create the virtual account with the payment provider (mock or real).
+  const accountReference = tradeAccountReference(trade.id);
+  const nomba = getNombaClient();
+  const va = await nomba.createVirtualAccount({
+    tradeId: trade.id,
+    amountMinor: trade.fiatExpectedMinor,
+    accountReference,
+    customerName: `Ure buyer ${buyer.walletAddress.slice(0, 8)}`,
+  });
+
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.virtualAccount.findUnique({
+      where: { tradeId: trade.id },
+    });
+
+    if (!existing) {
+      await tx.virtualAccount.create({
+        data: {
+          tradeId: trade.id,
+          provider: nomba.driver === "mock" ? "nomba-mock" : "nomba",
+          providerAccountId: va.providerAccountId,
+          accountReference: va.accountReference,
+          accountNumber: va.accountNumber,
+          bankName: va.bankName,
+          accountName: va.accountName,
+          expectedAmountMinor: trade.fiatExpectedMinor,
+          expiresAt: va.expiresAt,
+          rawProviderPayload: va.raw as Prisma.InputJsonValue,
+        },
+      });
+    }
+
+    const fresh = await tx.trade.findUniqueOrThrow({
+      where: { id: trade.id },
+      select: { status: true },
+    });
+
+    if (fresh.status !== "AWAITING_FIAT") {
+      await transitionTradeStatusInTx(tx, {
+        tradeId: trade.id,
+        to: "AWAITING_FIAT",
+        actorType: "USER",
+        actorId: buyer.id,
+        metadata: { accountReference, driver: nomba.driver },
+      });
+    }
+
+    return tx.trade.findUniqueOrThrow({
+      where: { id: trade.id },
+      include: tradeDetailInclude,
+    });
+  });
 }
 
-async function transitionTradeStatusInTx(
+export async function transitionTradeStatusInTx(
   tx: TxClient,
   input: {
     tradeId: string;

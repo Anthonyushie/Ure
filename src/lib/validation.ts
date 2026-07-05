@@ -9,6 +9,17 @@ export const createUserSchema = z.object({
   displayName: z.string().trim().min(1).max(80).optional(),
 });
 
+export const authNonceSchema = z.object({
+  walletAddress: walletAddressSchema,
+});
+
+export const createSessionSchema = z.object({
+  walletAddress: walletAddressSchema,
+  publicKey: z.string().trim().min(32).max(132),
+  signature: z.string().trim().min(64).max(200),
+  nonce: z.string().trim().min(16).max(128),
+});
+
 export const createTradeSchema = z.object({
   sellerWalletAddress: walletAddressSchema,
   cryptoAsset: z.literal("STX"),

@@ -308,3 +308,18 @@ model AuditLog {
   @@index([action])
   @@index([createdAt])
 }
+
+// Single-use sign-in challenge. The wallet must sign `message`; presenting a
+// valid signature over an unconsumed, unexpired nonce proves address ownership.
+model AuthChallenge {
+  id            String    @id @default(uuid())
+  walletAddress String
+  nonce         String    @unique
+  message       String
+  consumedAt    DateTime?
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+
+  @@index([walletAddress])
+  @@index([expiresAt])
+}

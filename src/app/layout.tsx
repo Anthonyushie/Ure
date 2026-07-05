@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import { getCurrentSession } from "@/lib/auth";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -18,11 +19,13 @@ export const metadata: Metadata = {
   description: "P2P STX to NGN escrow with exact-payment rails.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const session = await getCurrentSession().catch(() => null);
+
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="min-h-screen antialiased">
@@ -44,12 +47,14 @@ export default function RootLayout({
                 >
                   Dashboard
                 </Link>
-                <Link
-                  href="/admin"
-                  className="rounded-md px-3 py-2 transition hover:bg-white/10 hover:text-white"
-                >
-                  Admin
-                </Link>
+                {session?.role === "ADMIN" ? (
+                  <Link
+                    href="/admin"
+                    className="rounded-md px-3 py-2 transition hover:bg-white/10 hover:text-white"
+                  >
+                    Admin
+                  </Link>
+                ) : null}
               </div>
             </nav>
           </header>

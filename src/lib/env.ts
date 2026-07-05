@@ -11,6 +11,7 @@ const serverEnvSchema = z.object({
   NOMBA_CLIENT_ID: z.string().optional(),
   NOMBA_CLIENT_SECRET: z.string().optional(),
   NOMBA_ACCOUNT_ID: z.string().optional(),
+  NOMBA_SUBACCOUNT_ID: z.string().optional(),
   NOMBA_WEBHOOK_SECRET: z.string().optional(),
   STACKS_NETWORK: z.enum(["testnet", "mainnet", "devnet"]).default("testnet"),
   STACKS_API_URL: z.url().optional(),
@@ -19,6 +20,7 @@ const serverEnvSchema = z.object({
   ESCROW_ORACLE_PRIVATE_KEY: z.string().optional(),
   QUEUE_DRIVER: z.enum(["database"]).default("database"),
   JOB_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
+  CRON_SECRET: z.string().optional(),
   ADMIN_WALLET_ADDRESSES: z.string().default(""),
 });
 

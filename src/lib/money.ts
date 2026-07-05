@@ -60,3 +60,22 @@ export const formatKoboAsNgn = (amount: bigint): string =>
   formatMinorUnits(amount, 2);
 export const formatMicroStxAsStx = (amount: bigint): string =>
   formatMinorUnits(amount, 6);
+
+/**
+ * Provider boundary (Nomba) works in Naira (major units); our ledger works in
+ * kobo (minor units). These convert at the edge only — never store Naira.
+ */
+
+/** Tolerant Naira → kobo: accepts numbers or strings like "3500", "3,500.50", "₦3500". */
+export function nairaToKobo(input: string | number): bigint {
+  const cleaned = String(input).replace(/[^0-9.]/g, "");
+  if (!cleaned) return 0n;
+  const [whole, fraction = ""] = cleaned.split(".");
+  const koboFraction = fraction.slice(0, 2).padEnd(2, "0");
+  return BigInt(whole || "0") * 100n + BigInt(koboFraction || "0");
+}
+
+/** kobo → Naira as a number for JSON request bodies (e.g. 15_000_000n → 150000). */
+export function koboToNairaNumber(amount: bigint): number {
+  return Number(amount) / 100;
+}
